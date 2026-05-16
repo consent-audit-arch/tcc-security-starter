@@ -10,4 +10,5 @@ import java.lang.annotation.Target;
 public @interface RequiresConsent {
     String resource();
     String action();
+    String[] dataCategories() default {};
 }

@@ -44,30 +44,19 @@ public class TccSecurityProperties {
         private String purpose = "X-Purpose";
         private String dataSubjectId = "X-Data-Subject-Id";
         private String correlationId = "X-Correlation-Id";
+        private String dataCategory = "X-Data-Category";
+        private String dataCategories = "X-Data-Categories";
 
-        public String getPurpose() {
-            return purpose;
-        }
-
-        public void setPurpose(String purpose) {
-            this.purpose = purpose;
-        }
-
-        public String getDataSubjectId() {
-            return dataSubjectId;
-        }
-
-        public void setDataSubjectId(String dataSubjectId) {
-            this.dataSubjectId = dataSubjectId;
-        }
-
-        public String getCorrelationId() {
-            return correlationId;
-        }
-
-        public void setCorrelationId(String correlationId) {
-            this.correlationId = correlationId;
-        }
+        public String getPurpose() { return purpose; }
+        public void setPurpose(String purpose) { this.purpose = purpose; }
+        public String getDataSubjectId() { return dataSubjectId; }
+        public void setDataSubjectId(String dataSubjectId) { this.dataSubjectId = dataSubjectId; }
+        public String getCorrelationId() { return correlationId; }
+        public void setCorrelationId(String correlationId) { this.correlationId = correlationId; }
+        public String getDataCategory() { return dataCategory; }
+        public void setDataCategory(String dataCategory) { this.dataCategory = dataCategory; }
+        public String getDataCategories() { return dataCategories; }
+        public void setDataCategories(String dataCategories) { this.dataCategories = dataCategories; }
     }
 
     public static class OpaProperties {

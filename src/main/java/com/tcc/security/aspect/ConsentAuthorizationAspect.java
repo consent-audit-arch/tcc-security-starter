@@ -16,6 +16,10 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 
 @Aspect
@@ -32,7 +36,6 @@ public class ConsentAuthorizationAspect {
     @Around("@annotation(requiresConsent)")
     public Object authorize(ProceedingJoinPoint joinPoint, RequiresConsent requiresConsent) throws Throwable {
         System.out.println("[TCC-Security] Aspect triggered");
-        System.out.println("[TCC-Security] url=" + properties.getOpa().getUrl());
 
         if (!properties.isEnabled()) {
             System.out.println("[TCC-Security] properties.enabled=" + properties.isEnabled());
@@ -72,12 +75,44 @@ public class ConsentAuthorizationAspect {
         if (request != null) {
             context.setPurpose(request.getHeader(properties.getHeaders().getPurpose()));
             context.setDataSubjectId(request.getHeader(properties.getHeaders().getDataSubjectId()));
+            context.setDataCategory(request.getHeader(properties.getHeaders().getDataCategory()));
             context.setCorrelationId(request.getHeader(properties.getHeaders().getCorrelationId()));
             context.setHttpMethod(request.getMethod());
             context.setPath(request.getRequestURI());
+
+            List<String> headerCategories = parseDataCategoriesHeader(
+                    request.getHeader(properties.getHeaders().getDataCategories()));
+            List<String> annotationCategories = Arrays.asList(requiresConsent.dataCategories());
+
+            if (!annotationCategories.isEmpty()) {
+                validateDeclaredCategories(annotationCategories, headerCategories);
+                context.setDataCategories(annotationCategories);
+            } else {
+                context.setDataCategories(headerCategories);
+            }
         }
 
         return context;
+    }
+
+    private List<String> parseDataCategoriesHeader(String headerValue) {
+        if (headerValue == null || headerValue.isBlank()) {
+            return Collections.emptyList();
+        }
+        return Arrays.stream(headerValue.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .toList();
+    }
+
+    private void validateDeclaredCategories(List<String> declared, List<String> provided) {
+        Set<String> providedSet = new HashSet<>(provided);
+        for (String category : declared) {
+            if (!providedSet.contains(category)) {
+                throw new DataAccessDeniedException(
+                        "Required dataCategory '" + category + "' not found in request headers");
+            }
+        }
     }
 
     private CallerIdentity extractCallerIdentity(Jwt jwt) {
@@ -114,6 +149,8 @@ public class ConsentAuthorizationAspect {
                     + " | Resource: " + context.getResource()
                     + " | Action: " + context.getAction()
                     + " | Purpose: " + context.getPurpose()
+                    + " | DataCategory: " + context.getDataCategory()
+                    + " | DataCategories: " + context.getDataCategories()
                     + " | Subject: " + context.getDataSubjectId());
         }
     }
