@@ -16,6 +16,9 @@ public class TccSecurityProperties {
     @NestedConfigurationProperty
     private OpaProperties opa = new OpaProperties();
 
+    @NestedConfigurationProperty
+    private PipProperties pip = new PipProperties();
+
     public boolean isEnabled() {
         return enabled;
     }
@@ -40,9 +43,18 @@ public class TccSecurityProperties {
         this.opa = opa;
     }
 
+    public PipProperties getPip() {
+        return pip;
+    }
+
+    public void setPip(PipProperties pip) {
+        this.pip = pip;
+    }
+
     public static class Headers {
         private String purpose = "X-Purpose";
         private String dataSubjectId = "X-Data-Subject-Id";
+        private String dataSubjectIds = "X-Data-Subject-Ids";
         private String correlationId = "X-Correlation-Id";
         private String dataCategory = "X-Data-Category";
         private String dataCategories = "X-Data-Categories";
@@ -51,6 +63,8 @@ public class TccSecurityProperties {
         public void setPurpose(String purpose) { this.purpose = purpose; }
         public String getDataSubjectId() { return dataSubjectId; }
         public void setDataSubjectId(String dataSubjectId) { this.dataSubjectId = dataSubjectId; }
+        public String getDataSubjectIds() { return dataSubjectIds; }
+        public void setDataSubjectIds(String dataSubjectIds) { this.dataSubjectIds = dataSubjectIds; }
         public String getCorrelationId() { return correlationId; }
         public void setCorrelationId(String correlationId) { this.correlationId = correlationId; }
         public String getDataCategory() { return dataCategory; }
@@ -87,5 +101,12 @@ public class TccSecurityProperties {
         public void setTimeout(Duration timeout) {
             this.timeout = timeout;
         }
+    }
+
+    public static class PipProperties {
+        private String url = "http://localhost:8080/api/v1/consent";
+
+        public String getUrl() { return url; }
+        public void setUrl(String url) { this.url = url; }
     }
 }

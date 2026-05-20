@@ -6,6 +6,9 @@ import com.tcc.security.context.AuthorizationContext;
 import com.tcc.security.context.CallerIdentity;
 import com.tcc.security.exception.DataAccessDeniedException;
 import com.tcc.security.opa.OpaClient;
+import com.tcc.security.opa.OpaDecision;
+import com.tcc.security.pip.ConsentQueryPipClient;
+import com.tcc.security.pip.PipTitularResult;
 import jakarta.servlet.http.HttpServletRequest;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
@@ -25,12 +28,16 @@ import java.util.Set;
 @Aspect
 public class ConsentAuthorizationAspect {
 
+    private static final String DECISIONS_ATTR = "tcc-authorization-decisions";
+
     private final TccSecurityProperties properties;
     private final OpaClient opaClient;
+    private final ConsentQueryPipClient pipClient;
 
-    public ConsentAuthorizationAspect(TccSecurityProperties properties, OpaClient opaClient) {
+    public ConsentAuthorizationAspect(TccSecurityProperties properties, OpaClient opaClient, ConsentQueryPipClient pipClient) {
         this.properties = properties;
         this.opaClient = opaClient;
+        this.pipClient = pipClient;
     }
 
     @Around("@annotation(requiresConsent)")
@@ -50,7 +57,11 @@ public class ConsentAuthorizationAspect {
             return joinPoint.proceed();
         }
 
-        var decision = opaClient.evaluate(context);
+        if (context.isBatchRequest()) {
+            return handleBatchRequest(joinPoint, context);
+        }
+
+        OpaDecision decision = opaClient.evaluate(context);
         System.out.println("[TCC-Security] Decision: allow=" + decision.isAllow() + " reason=" + decision.getReason());
         if (!decision.isAllow()) {
             throw new DataAccessDeniedException(decision.getReason() != null
@@ -59,6 +70,56 @@ public class ConsentAuthorizationAspect {
         }
 
         return joinPoint.proceed();
+    }
+
+    private String resolveBatchDataCategory(AuthorizationContext context) {
+        List<String> categories = context.getDataCategories();
+        if (categories != null && !categories.isEmpty()) {
+            return categories.get(0);
+        }
+        return context.getDataCategory();
+    }
+
+    private Object handleBatchRequest(ProceedingJoinPoint joinPoint, AuthorizationContext context) throws Throwable {
+        List<PipTitularResult> pipResults = pipClient.batchAuthorizationsResult(
+                context.getDataSubjectIds(),
+                resolveBatchDataCategory(context),
+                context.getPurpose());
+
+        context.setPipData(pipResults);
+
+        OpaDecision decision = opaClient.evaluate(context);
+        System.out.println("[TCC-Security] Batch decision: allow=" + decision.isAllow());
+
+        if (!decision.isAllow()) {
+            throw new DataAccessDeniedException("All titulars denied");
+        }
+
+        List<PipTitularResult> decisions = pipResults;
+        if (decision.isBatch()) {
+            decisions = decision.getDecisions().stream()
+                    .map(d -> new PipTitularResult(d.getTitularId(), d.isAllow(), d.getReason()))
+                    .toList();
+        }
+
+        HttpServletRequest request = getCurrentRequest();
+        if (request != null) {
+            request.setAttribute(DECISIONS_ATTR, decisions);
+        }
+
+        return joinPoint.proceed();
+    }
+
+    @SuppressWarnings("unchecked")
+    public static List<PipTitularResult> getDecisionsFromRequest() {
+        var attributes = RequestContextHolder.getRequestAttributes();
+        if (attributes instanceof ServletRequestAttributes servletAttributes) {
+            Object attr = servletAttributes.getRequest().getAttribute(DECISIONS_ATTR);
+            if (attr instanceof List<?>) {
+                return (List<PipTitularResult>) attr;
+            }
+        }
+        return Collections.emptyList();
     }
 
     private AuthorizationContext buildContext(RequiresConsent requiresConsent) {
@@ -75,10 +136,24 @@ public class ConsentAuthorizationAspect {
         if (request != null) {
             context.setPurpose(request.getHeader(properties.getHeaders().getPurpose()));
             context.setDataSubjectId(request.getHeader(properties.getHeaders().getDataSubjectId()));
-            context.setDataCategory(request.getHeader(properties.getHeaders().getDataCategory()));
+            String dataCategory = request.getHeader(properties.getHeaders().getDataCategory());
+            if (dataCategory == null) {
+                dataCategory = request.getHeader(properties.getHeaders().getDataCategories());
+            }
+            context.setDataCategory(dataCategory);
             context.setCorrelationId(request.getHeader(properties.getHeaders().getCorrelationId()));
             context.setHttpMethod(request.getMethod());
             context.setPath(request.getRequestURI());
+
+            String dataSubjectIdsHeader = request.getHeader(properties.getHeaders().getDataSubjectIds());
+            if (dataSubjectIdsHeader != null && !dataSubjectIdsHeader.isBlank()) {
+                List<Long> ids = Arrays.stream(dataSubjectIdsHeader.split(","))
+                        .map(String::trim)
+                        .filter(s -> !s.isEmpty())
+                        .map(Long::valueOf)
+                        .toList();
+                context.setDataSubjectIds(ids);
+            }
 
             List<String> headerCategories = parseDataCategoriesHeader(
                     request.getHeader(properties.getHeaders().getDataCategories()));
@@ -150,8 +225,8 @@ public class ConsentAuthorizationAspect {
                     + " | Action: " + context.getAction()
                     + " | Purpose: " + context.getPurpose()
                     + " | DataCategory: " + context.getDataCategory()
-                    + " | DataCategories: " + context.getDataCategories()
-                    + " | Subject: " + context.getDataSubjectId());
+                    + " | Batch: " + context.isBatchRequest()
+                    + (context.isBatchRequest() ? " | TitularIds: " + context.getDataSubjectIds() : " | Subject: " + context.getDataSubjectId()));
         }
     }
 }

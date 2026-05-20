@@ -8,11 +8,17 @@ public class AuthorizationContext {
     private String action;
     private String purpose;
     private String dataSubjectId;
+    private List<Long> dataSubjectIds;
     private String dataCategory;
     private List<String> dataCategories;
     private String correlationId;
     private String httpMethod;
     private String path;
+    private Object pipData;
+
+    public boolean isBatchRequest() {
+        return dataSubjectIds != null && !dataSubjectIds.isEmpty();
+    }
 
     public CallerIdentity getCaller() { return caller; }
     public void setCaller(CallerIdentity caller) { this.caller = caller; }
@@ -24,6 +30,8 @@ public class AuthorizationContext {
     public void setPurpose(String purpose) { this.purpose = purpose; }
     public String getDataSubjectId() { return dataSubjectId; }
     public void setDataSubjectId(String dataSubjectId) { this.dataSubjectId = dataSubjectId; }
+    public List<Long> getDataSubjectIds() { return dataSubjectIds; }
+    public void setDataSubjectIds(List<Long> dataSubjectIds) { this.dataSubjectIds = dataSubjectIds; }
     public String getDataCategory() { return dataCategory; }
     public void setDataCategory(String dataCategory) { this.dataCategory = dataCategory; }
     public List<String> getDataCategories() { return dataCategories; }
@@ -34,4 +42,6 @@ public class AuthorizationContext {
     public void setHttpMethod(String httpMethod) { this.httpMethod = httpMethod; }
     public String getPath() { return path; }
     public void setPath(String path) { this.path = path; }
+    public Object getPipData() { return pipData; }
+    public void setPipData(Object pipData) { this.pipData = pipData; }
 }

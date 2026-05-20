@@ -39,7 +39,7 @@ public class OpaClient {
         }
     }
 
-    private OpaDecision denied(String reason) {
+    public OpaDecision denied(String reason) {
         OpaDecision decision = new OpaDecision();
         decision.setAllow(false);
         decision.setReason(reason);
