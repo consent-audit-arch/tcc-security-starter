@@ -11,4 +11,6 @@ public @interface RequiresConsent {
     String resource();
     String action();
     String[] dataCategories() default {};
+    String dataSubjectIdParam() default "";
+    String dataSubjectIdsParam() default "";
 }

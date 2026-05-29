@@ -19,6 +19,11 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
+import org.aspectj.lang.reflect.MethodSignature;
+import org.springframework.core.DefaultParameterNameDiscoverer;
+import org.springframework.core.ParameterNameDiscoverer;
+
+import java.lang.reflect.Field;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
@@ -33,11 +38,13 @@ public class ConsentAuthorizationAspect {
     private final TccSecurityProperties properties;
     private final OpaClient opaClient;
     private final ConsentQueryPipClient pipClient;
+    private final ParameterNameDiscoverer parameterNameDiscoverer;
 
     public ConsentAuthorizationAspect(TccSecurityProperties properties, OpaClient opaClient, ConsentQueryPipClient pipClient) {
         this.properties = properties;
         this.opaClient = opaClient;
         this.pipClient = pipClient;
+        this.parameterNameDiscoverer = new DefaultParameterNameDiscoverer();
     }
 
     @Around("@annotation(requiresConsent)")
@@ -49,7 +56,7 @@ public class ConsentAuthorizationAspect {
             return joinPoint.proceed();
         }
 
-        AuthorizationContext context = buildContext(requiresConsent);
+        AuthorizationContext context = buildContext(joinPoint, requiresConsent);
         logContext(context);
 
         if (!properties.getOpa().isEnabled()) {
@@ -122,7 +129,7 @@ public class ConsentAuthorizationAspect {
         return Collections.emptyList();
     }
 
-    private AuthorizationContext buildContext(RequiresConsent requiresConsent) {
+    private AuthorizationContext buildContext(ProceedingJoinPoint joinPoint, RequiresConsent requiresConsent) {
         AuthorizationContext context = new AuthorizationContext();
         context.setResource(requiresConsent.resource());
         context.setAction(requiresConsent.action());
@@ -135,24 +142,43 @@ public class ConsentAuthorizationAspect {
         HttpServletRequest request = getCurrentRequest();
         if (request != null) {
             context.setPurpose(request.getHeader(properties.getHeaders().getPurpose()));
-            context.setDataSubjectId(request.getHeader(properties.getHeaders().getDataSubjectId()));
+            context.setCorrelationId(request.getHeader(properties.getHeaders().getCorrelationId()));
             String dataCategory = request.getHeader(properties.getHeaders().getDataCategory());
             if (dataCategory == null) {
                 dataCategory = request.getHeader(properties.getHeaders().getDataCategories());
             }
             context.setDataCategory(dataCategory);
-            context.setCorrelationId(request.getHeader(properties.getHeaders().getCorrelationId()));
             context.setHttpMethod(request.getMethod());
             context.setPath(request.getRequestURI());
 
-            String dataSubjectIdsHeader = request.getHeader(properties.getHeaders().getDataSubjectIds());
-            if (dataSubjectIdsHeader != null && !dataSubjectIdsHeader.isBlank()) {
-                List<Long> ids = Arrays.stream(dataSubjectIdsHeader.split(","))
-                        .map(String::trim)
-                        .filter(s -> !s.isEmpty())
-                        .map(Long::valueOf)
-                        .toList();
-                context.setDataSubjectIds(ids);
+            String dataSubjectId = extractRequiredParam(joinPoint, requiresConsent.dataSubjectIdParam());
+            if (dataSubjectId == null) {
+                dataSubjectId = request.getHeader(properties.getHeaders().getDataSubjectId());
+            }
+            context.setDataSubjectId(dataSubjectId);
+
+            String dataSubjectIdsParam = requiresConsent.dataSubjectIdsParam();
+            if (!dataSubjectIdsParam.isEmpty()) {
+                Object idsValue = extractParamValue(joinPoint, dataSubjectIdsParam);
+                if (idsValue instanceof List<?> ids) {
+                    List<Long> longIds = ids.stream()
+                            .filter(e -> e instanceof Number)
+                            .map(e -> ((Number) e).longValue())
+                            .toList();
+                    if (!longIds.isEmpty()) {
+                        context.setDataSubjectIds(longIds);
+                    }
+                }
+            } else {
+                String dataSubjectIdsHeader = request.getHeader(properties.getHeaders().getDataSubjectIds());
+                if (dataSubjectIdsHeader != null && !dataSubjectIdsHeader.isBlank()) {
+                    List<Long> ids = Arrays.stream(dataSubjectIdsHeader.split(","))
+                            .map(String::trim)
+                            .filter(s -> !s.isEmpty())
+                            .map(Long::valueOf)
+                            .toList();
+                    context.setDataSubjectIds(ids);
+                }
             }
 
             List<String> headerCategories = parseDataCategoriesHeader(
@@ -168,6 +194,69 @@ public class ConsentAuthorizationAspect {
         }
 
         return context;
+    }
+
+    private String extractRequiredParam(ProceedingJoinPoint joinPoint, String paramName) {
+        if (paramName == null || paramName.isEmpty()) {
+            return null;
+        }
+        Object value = extractParamValue(joinPoint, paramName);
+        if (value == null) {
+            return null;
+        }
+        return String.valueOf(value);
+    }
+
+    private Object extractParamValue(ProceedingJoinPoint joinPoint, String paramPath) {
+        try {
+            MethodSignature signature = (MethodSignature) joinPoint.getSignature();
+            String[] paramNames = parameterNameDiscoverer.getParameterNames(signature.getMethod());
+            if (paramNames == null) {
+                return null;
+            }
+
+            String paramName = paramPath.contains(".") ? paramPath.substring(0, paramPath.indexOf('.')) : paramPath;
+            String fieldPath = paramPath.contains(".") ? paramPath.substring(paramPath.indexOf('.') + 1) : null;
+
+            Object[] args = joinPoint.getArgs();
+            Object paramValue = null;
+
+            for (int i = 0; i < paramNames.length; i++) {
+                if (paramNames[i].equals(paramName)) {
+                    paramValue = args[i];
+                    break;
+                }
+            }
+
+            if (paramValue == null) {
+                return null;
+            }
+
+            if (fieldPath != null) {
+                return resolveField(paramValue, fieldPath);
+            }
+
+            return paramValue;
+        } catch (Exception e) {
+            System.err.println("[TCC-Security] Failed to extract param: " + paramPath + " - " + e.getMessage());
+            return null;
+        }
+    }
+
+    private Object resolveField(Object target, String fieldPath) throws Exception {
+        Object current = target;
+        for (String part : fieldPath.split("\\.")) {
+            if (current == null) return null;
+            String getter = "get" + Character.toUpperCase(part.charAt(0)) + part.substring(1);
+            try {
+                current = current.getClass().getMethod(getter).invoke(current);
+            } catch (NoSuchMethodException e) {
+                Field field = current.getClass().getDeclaredField(part);
+                field.setAccessible(true);
+                current = field.get(current);
+            }
+        }
+        return current;
     }
 
     private List<String> parseDataCategoriesHeader(String headerValue) {
