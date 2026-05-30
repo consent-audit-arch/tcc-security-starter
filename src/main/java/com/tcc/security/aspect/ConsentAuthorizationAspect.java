@@ -1,13 +1,15 @@
 package com.tcc.security.aspect;
 
 import com.tcc.security.annotation.RequiresConsent;
+import com.tcc.security.audit.AuditEvent;
+import com.tcc.security.audit.AuditEventProducer;
 import com.tcc.security.autoconfigure.TccSecurityProperties;
 import com.tcc.security.context.AuthorizationContext;
 import com.tcc.security.context.CallerIdentity;
 import com.tcc.security.exception.DataAccessDeniedException;
 import com.tcc.security.opa.OpaClient;
 import com.tcc.security.opa.OpaDecision;
-import com.tcc.security.pip.ConsentQueryPipClient;
+import com.tcc.security.opa.TitularOpaDecision;
 import com.tcc.security.pip.PipTitularResult;
 import jakarta.servlet.http.HttpServletRequest;
 import org.aspectj.lang.ProceedingJoinPoint;
@@ -24,6 +26,7 @@ import org.springframework.core.DefaultParameterNameDiscoverer;
 import org.springframework.core.ParameterNameDiscoverer;
 
 import java.lang.reflect.Field;
+import java.time.Instant;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
@@ -37,13 +40,14 @@ public class ConsentAuthorizationAspect {
 
     private final TccSecurityProperties properties;
     private final OpaClient opaClient;
-    private final ConsentQueryPipClient pipClient;
+    private final AuditEventProducer auditEventProducer;
     private final ParameterNameDiscoverer parameterNameDiscoverer;
 
-    public ConsentAuthorizationAspect(TccSecurityProperties properties, OpaClient opaClient, ConsentQueryPipClient pipClient) {
+    public ConsentAuthorizationAspect(TccSecurityProperties properties, OpaClient opaClient,
+                                      AuditEventProducer auditEventProducer) {
         this.properties = properties;
         this.opaClient = opaClient;
-        this.pipClient = pipClient;
+        this.auditEventProducer = auditEventProducer;
         this.parameterNameDiscoverer = new DefaultParameterNameDiscoverer();
     }
 
@@ -70,6 +74,9 @@ public class ConsentAuthorizationAspect {
 
         OpaDecision decision = opaClient.evaluate(context);
         System.out.println("[TCC-Security] Decision: allow=" + decision.isAllow() + " reason=" + decision.getReason());
+
+        sendAuditEvent(context, decision.isAllow(), decision.getReason());
+
         if (!decision.isAllow()) {
             throw new DataAccessDeniedException(decision.getReason() != null
                     ? decision.getReason()
@@ -79,39 +86,29 @@ public class ConsentAuthorizationAspect {
         return joinPoint.proceed();
     }
 
-    private String resolveBatchDataCategory(AuthorizationContext context) {
-        List<String> categories = context.getDataCategories();
-        if (categories != null && !categories.isEmpty()) {
-            return categories.get(0);
-        }
-        return context.getDataCategory();
-    }
-
     private Object handleBatchRequest(ProceedingJoinPoint joinPoint, AuthorizationContext context) throws Throwable {
-        List<PipTitularResult> pipResults = pipClient.batchAuthorizationsResult(
-                context.getDataSubjectIds(),
-                resolveBatchDataCategory(context),
-                context.getPurpose());
-
-        context.setPipData(pipResults);
-
         OpaDecision decision = opaClient.evaluate(context);
         System.out.println("[TCC-Security] Batch decision: allow=" + decision.isAllow());
 
         if (!decision.isAllow()) {
-            throw new DataAccessDeniedException("All titulars denied");
+            sendAuditEvent(context, false, decision.getReason());
+            String reason = decision.getReason() != null ? decision.getReason() : "All titulars denied";
+            throw new DataAccessDeniedException(reason);
         }
 
-        List<PipTitularResult> decisions = pipResults;
         if (decision.isBatch()) {
-            decisions = decision.getDecisions().stream()
+            List<PipTitularResult> decisions = decision.getDecisions().stream()
                     .map(d -> new PipTitularResult(d.getTitularId(), d.isAllow(), d.getReason()))
                     .toList();
-        }
-
-        HttpServletRequest request = getCurrentRequest();
-        if (request != null) {
-            request.setAttribute(DECISIONS_ATTR, decisions);
+            HttpServletRequest request = getCurrentRequest();
+            if (request != null) {
+                request.setAttribute(DECISIONS_ATTR, decisions);
+            }
+            for (PipTitularResult d : decisions) {
+                AuditEvent event = buildAuditEvent(context, d.isAuthorized(), d.getReason());
+                event.setDataSubjectId(String.valueOf(d.getTitularId()));
+                auditEventProducer.sendEvent(event);
+            }
         }
 
         return joinPoint.proceed();
@@ -142,7 +139,11 @@ public class ConsentAuthorizationAspect {
         HttpServletRequest request = getCurrentRequest();
         if (request != null) {
             context.setPurpose(request.getHeader(properties.getHeaders().getPurpose()));
-            context.setCorrelationId(request.getHeader(properties.getHeaders().getCorrelationId()));
+            String correlationId = request.getHeader(properties.getHeaders().getCorrelationId());
+            if (correlationId == null || correlationId.isBlank()) {
+                correlationId = java.util.UUID.randomUUID().toString();
+            }
+            context.setCorrelationId(correlationId);
             String dataCategory = request.getHeader(properties.getHeaders().getDataCategory());
             if (dataCategory == null) {
                 dataCategory = request.getHeader(properties.getHeaders().getDataCategories());
@@ -317,5 +318,31 @@ public class ConsentAuthorizationAspect {
                     + " | Batch: " + context.isBatchRequest()
                     + (context.isBatchRequest() ? " | TitularIds: " + context.getDataSubjectIds() : " | Subject: " + context.getDataSubjectId()));
         }
+    }
+
+    private void sendAuditEvent(AuthorizationContext context, boolean allowed, String reason) {
+        AuditEvent event = buildAuditEvent(context, allowed, reason);
+        auditEventProducer.sendEvent(event);
+    }
+
+    private AuditEvent buildAuditEvent(AuthorizationContext context, boolean allowed, String reason) {
+        CallerIdentity caller = context.getCaller();
+        return new AuditEvent(
+                Instant.now(),
+                caller != null ? caller.getClientId() : null,
+                caller != null ? caller.getSubject() : null,
+                caller != null ? caller.getRoles() : null,
+                context.getResource(),
+                context.getAction(),
+                context.getPurpose(),
+                context.getDataSubjectId(),
+                context.getDataSubjectIds(),
+                context.getDataCategories(),
+                context.getCorrelationId(),
+                context.getHttpMethod(),
+                context.getPath(),
+                allowed,
+                reason
+        );
     }
 }

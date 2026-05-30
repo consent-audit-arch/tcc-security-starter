@@ -1,8 +1,9 @@
 package com.tcc.security.autoconfigure;
 
 import com.tcc.security.aspect.ConsentAuthorizationAspect;
+import com.tcc.security.audit.AuditEventProducer;
+import com.tcc.security.audit.NoopAuditEventProducer;
 import com.tcc.security.opa.OpaClient;
-import com.tcc.security.pip.ConsentQueryPipClient;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -23,9 +24,9 @@ public class TccSecurityAutoConfiguration {
     }
 
     @Bean
-    @ConditionalOnMissingBean(ConsentQueryPipClient.class)
-    public ConsentQueryPipClient consentQueryPipClient(TccSecurityProperties properties) {
-        return new ConsentQueryPipClient(properties.getPip().getUrl());
+    @ConditionalOnMissingBean(AuditEventProducer.class)
+    public AuditEventProducer noopAuditEventProducer() {
+        return new NoopAuditEventProducer();
     }
 
     @Bean
@@ -33,8 +34,8 @@ public class TccSecurityAutoConfiguration {
     public ConsentAuthorizationAspect consentAuthorizationAspect(
             TccSecurityProperties properties,
             OpaClient opaClient,
-            ConsentQueryPipClient pipClient) {
-        return new ConsentAuthorizationAspect(properties, opaClient, pipClient);
+            AuditEventProducer auditEventProducer) {
+        return new ConsentAuthorizationAspect(properties, opaClient, auditEventProducer);
     }
 
     @Bean

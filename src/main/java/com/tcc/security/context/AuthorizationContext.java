@@ -14,8 +14,6 @@ public class AuthorizationContext {
     private String correlationId;
     private String httpMethod;
     private String path;
-    private Object pipData;
-
     public boolean isBatchRequest() {
         return dataSubjectIds != null && !dataSubjectIds.isEmpty();
     }
@@ -42,6 +40,4 @@ public class AuthorizationContext {
     public void setHttpMethod(String httpMethod) { this.httpMethod = httpMethod; }
     public String getPath() { return path; }
     public void setPath(String path) { this.path = path; }
-    public Object getPipData() { return pipData; }
-    public void setPipData(Object pipData) { this.pipData = pipData; }
 }

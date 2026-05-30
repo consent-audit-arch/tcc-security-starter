@@ -1,1 +1,2 @@
 com.tcc.security.autoconfigure.TccSecurityAutoConfiguration
+com.tcc.security.autoconfigure.KafkaAuditAutoConfiguration

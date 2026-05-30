@@ -16,9 +16,6 @@ public class TccSecurityProperties {
     @NestedConfigurationProperty
     private OpaProperties opa = new OpaProperties();
 
-    @NestedConfigurationProperty
-    private PipProperties pip = new PipProperties();
-
     public boolean isEnabled() {
         return enabled;
     }
@@ -41,14 +38,6 @@ public class TccSecurityProperties {
 
     public void setOpa(OpaProperties opa) {
         this.opa = opa;
-    }
-
-    public PipProperties getPip() {
-        return pip;
-    }
-
-    public void setPip(PipProperties pip) {
-        this.pip = pip;
     }
 
     public static class Headers {
@@ -101,12 +90,5 @@ public class TccSecurityProperties {
         public void setTimeout(Duration timeout) {
             this.timeout = timeout;
         }
-    }
-
-    public static class PipProperties {
-        private String url = "http://localhost:8080/api/v1/consent";
-
-        public String getUrl() { return url; }
-        public void setUrl(String url) { this.url = url; }
     }
 }
