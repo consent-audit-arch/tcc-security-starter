@@ -11,10 +11,14 @@ public class OpaClient {
     private final RestClient restClient;
 
     public OpaClient(TccSecurityProperties.OpaProperties opaProperties) {
-        this.opaProperties = opaProperties;
-        this.restClient = RestClient.builder()
+        this(opaProperties, RestClient.builder()
                 .baseUrl(opaProperties.getUrl())
-                .build();
+                .build());
+    }
+
+    OpaClient(TccSecurityProperties.OpaProperties opaProperties, RestClient restClient) {
+        this.opaProperties = opaProperties;
+        this.restClient = restClient;
     }
 
     public OpaDecision evaluate(AuthorizationContext context) {
