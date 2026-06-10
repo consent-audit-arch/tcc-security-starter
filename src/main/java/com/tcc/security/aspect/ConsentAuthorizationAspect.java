@@ -144,6 +144,7 @@ public class ConsentAuthorizationAspect {
                 correlationId = java.util.UUID.randomUUID().toString();
             }
             context.setCorrelationId(correlationId);
+            request.setAttribute("tcc-correlation-id", correlationId);
             String dataCategory = request.getHeader(properties.getHeaders().getDataCategory());
             if (dataCategory == null) {
                 dataCategory = request.getHeader(properties.getHeaders().getDataCategories());
