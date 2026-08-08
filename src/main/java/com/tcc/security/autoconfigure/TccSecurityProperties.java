@@ -45,7 +45,6 @@ public class TccSecurityProperties {
         private String dataSubjectId = "X-Data-Subject-Id";
         private String dataSubjectIds = "X-Data-Subject-Ids";
         private String correlationId = "X-Correlation-Id";
-        private String dataCategory = "X-Data-Category";
         private String dataCategories = "X-Data-Categories";
 
         public String getPurpose() { return purpose; }
@@ -56,8 +55,6 @@ public class TccSecurityProperties {
         public void setDataSubjectIds(String dataSubjectIds) { this.dataSubjectIds = dataSubjectIds; }
         public String getCorrelationId() { return correlationId; }
         public void setCorrelationId(String correlationId) { this.correlationId = correlationId; }
-        public String getDataCategory() { return dataCategory; }
-        public void setDataCategory(String dataCategory) { this.dataCategory = dataCategory; }
         public String getDataCategories() { return dataCategories; }
         public void setDataCategories(String dataCategories) { this.dataCategories = dataCategories; }
     }
