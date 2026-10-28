@@ -1,27 +1,40 @@
 # TCC Security Starter
 
-Biblioteca reutilizável para padronização de autenticação M2M, autorização contextual e rastreabilidade no Módulo 2 do projeto TCC SQUAD.
+Biblioteca Spring Boot que concentra o **PEP (Policy Enforcement Point)** nos serviços do Consent & Audit Architecture: contexto de autorização, consulta ao OPA e publicação das decisões de auditoria.
 
-## Objetivo
+Projeto pessoal de Renan Rohers, iniciado no TCC. [Visão geral](https://github.com/consent-audit-arch/infra#readme) · [Arquitetura](https://github.com/consent-audit-arch/infra/blob/main/docs/architecture.md)
 
-O `tcc-security-starter` atua como **PEP (Policy Enforcement Point)** embutido em cada serviço protegido, integrando-se com:
-- **Keycloak** para autenticação M2M via `client_credentials`
-- **OPA** (como sidecar local) para decisão de autorização contextual
-- **Spring Security** como base de validação JWT
+## Fluxo
 
-## Arquitetura
-
+```mermaid
+sequenceDiagram
+    participant S as Serviço com JWT validado
+    participant P as Aspecto RequiresConsent
+    participant O as OPA local
+    participant Q as Consent Query / PIP
+    participant K as Kafka
+    S->>P: Método anotado + contexto
+    P->>O: Avaliar autorização
+    O->>Q: Consultar consentimento conforme policy
+    Q-->>O: Estado atual
+    O-->>P: Decisão
+    P->>K: Registro da decisão (assíncrono)
+    alt Permitido
+        P-->>S: Prosseguir com o método
+    else Negado
+        P-->>S: DataAccessDeniedException
+    end
 ```
-Serviço → [Spring Security JWT] → [ConsentAuthorizationAspect] → [OPA sidecar] → Decisão
+
+O starter implementa o enforcement no serviço. A lógica de política fica nos arquivos Rego; a consulta ao PIP depende da policy. A autenticação JWT e as credenciais M2M são configuradas pelas aplicações consumidoras.
+
+## Instalação local
+
+Java 21 e Maven:
+
+```bash
+mvn install
 ```
-
-- Keycloak autentica o serviço chamador (M2M)
-- OPA decide autorização considerando: serviço, finalidade, recurso, titular e consentimento
-- Princípio **fail closed**: erro de comunicação com OPA nega acesso
-
-## Uso nos Serviços Consumidores
-
-### Dependência Maven
 
 ```xml
 <dependency>
@@ -31,16 +44,16 @@ Serviço → [Spring Security JWT] → [ConsentAuthorizationAspect] → [OPA sid
 </dependency>
 ```
 
-### application.yml
+## Uso
+
+```java
+@RequiresConsent(resource = "USER_PROFILE", action = "READ",
+                 dataCategories = {"PERSONAL_DATA"})
+```
+
+A anotação é aplicada ao método protegido. O contexto aceita titular individual ou lote, categorias de dados, finalidade e identificador de correlação.
 
 ```yaml
-spring:
-  security:
-    oauth2:
-      resourceserver:
-        jwt:
-          issuer-uri: http://localhost:8180/realms/tcc
-
 tcc:
   security:
     enabled: true
@@ -48,73 +61,21 @@ tcc:
       enabled: true
       url: http://localhost:8181/v1/data/user/authz/decision
       timeout: 2s
-    headers:
-      purpose: X-Purpose
-      data-subject-id: X-Data-Subject-Id
-      correlation-id: X-Correlation-Id
+    audit:
+      kafka:
+        enabled: true
+spring:
+  kafka:
+    bootstrap-servers: localhost:9092
 ```
 
-### Exemplo de Uso da Annotation
+Ajuste o caminho OPA ao pacote da policy do serviço. Cabeçalhos padrão: `X-Purpose`, `X-Data-Subject-Id`, `X-Data-Subject-Ids`, `X-Data-Categories` e `X-Correlation-Id`.
 
-```java
-@RestController
-public class UserController {
+## Componentes e limites
 
-    @RequiresConsent(resource = "USER_PROFILE", action = "READ")
-    @GetMapping("/{id}")
-    public UserResponse findById(@PathVariable Long id) {
-        return userService.findById(id);
-    }
-}
-```
+- `ConsentAuthorizationAspect`: intercepta métodos anotados e aplica a decisão.
+- `OpaClient`: comunicação com o PDP; falhas de consulta são tratadas com negação.
+- `KafkaAuditEventProducer`: publicação assíncrona em `ev-audit-authorizations`, com fallback para DLT.
+- `TccSecurityProperties`: configuração em `tcc.security.*`; o controle pode ser desabilitado por configuração.
 
-### Headers Esperados em Chamadas Protegidas
-
-```
-Authorization: Bearer <token-client-credentials>
-X-Purpose: BILLING_ANALYSIS
-X-Data-Subject-Id: <id-do-titular>
-X-Correlation-Id: <uuid>
-```
-
-### Exemplo de Chamada M2M
-
-1. Obter token no Keycloak:
-```bash
-curl -X POST http://localhost:8180/realms/tcc/protocol/openid-connect/token \
-  -u "billing-service:client-secret" \
-  -d "grant_type=client_credentials"
-```
-
-2. Chamar serviço protegido:
-```bash
-curl http://localhost:8080/users/123 \
-  -H "Authorization: Bearer <token>" \
-  -H "X-Purpose: BILLING_ANALYSIS" \
-  -H "X-Data-Subject-Id: 123" \
-  -H "X-Correlation-Id: $(uuidgen)"
-```
-
-## Componentes
-
-| Classe | Papel |
-|--------|-------|
-| `@RequiresConsent` | Annotation para marcar métodos que exigem autorização |
-| `ConsentAuthorizationAspect` | Aspect que intercepta e valida acesso via OPA |
-| `OpaClient` | Cliente REST para OPA sidecar (fail closed) |
-| `AuthorizationContext` | Modelo de contexto enviado ao OPA |
-| `TccSecurityProperties` | Configurações via `tcc.security.*` |
-| `DataAccessDeniedException` | Exceção lançada quando OPA nega acesso |
-
-## Build
-
-```bash
-mvn clean install
-```
-
-## Notas
-
-- Não inclui Kafka (auditoria será adicionada futuramente)
-- Não inclui integração com consent-query-service (será PIP futuro)
-- Foco exclusivo em M2M com `client_credentials`
-- OPA deve rodar como sidecar no mesmo pod/container network
+A decisão é registrada antes da execução do método. `ALLOWED` não comprova sucesso do processamento. O envio de auditoria não possui outbox durável local; falhas prolongadas podem comprometer a completude da trilha. Veja os [limites do protótipo](https://github.com/consent-audit-arch/infra/blob/main/docs/architecture.md#limites-e-evolução).
